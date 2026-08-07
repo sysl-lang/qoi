@@ -1,0 +1,53 @@
+// Lossless image compression, bound to QOI.
+//
+// There is no `dependencies` block because QOI depends on nothing -- the implementation includes
+// `<stdlib.h>` and `<string.h>` and that is the whole list. The header itself is carried in this
+// package, because QOI is not a library anybody has installed.
+//
+// This is the block a *consumer* writes to reach this package, and resolution for it is built
+// (`design/packages.md` §§ 3-6): a `sysl build` fetches the coordinate, selects by MVS, checks what
+// arrived against `sysl.sum`, and compiles it as more modules.
+//
+//     dependencies {
+//       qoi { git = "github.com/sysl-lang/qoi", version = "0.1.0" }
+//     }
+//
+// The coordinate is identity rather than a URL, so it carries no `https://`, and the version is the
+// tag `v0.1.0` on this repository. `build-lib` and `--lib` still work and are what the tests here
+// use, but they are no longer the only way in.
+
+// `name` is the package; the module a program imports is `sh.sysl.qoi`, and the two are deliberately
+// different. The module carries the `sh.sysl.` prefix so that no package claims a top-level word
+// another one might want; the package name is the short one, because it names this repository rather
+// than a namespace.
+
+package {
+  name    = "qoi"
+  version = "0.1.0"
+}
+
+// **There is deliberately no `requires` block, and for this package that took work.**
+//
+// A capability clause is a claim about what a library *does*, and what QOI does is arithmetic on
+// bytes it was handed. It opens no file, reads no clock and asks the operating system for nothing.
+// monocypher is in the same position and says nothing for the same reason.
+//
+// **The one it looked like it would have to claim is `alloc`.** All three of `qoi_encode`,
+// `qoi_decode` and `qoi_read` `malloc` their result and hand the caller a pointer to free -- the one
+// API shape no other package here has, and one sysl cannot express, since there is no way to adopt a
+// raw pointer as owned storage and no `free` to release it.
+//
+// `QOI_MALLOC` and `QOI_FREE` are overridable macros, and `qoi_encode` computes the size it needs
+// before it asks for it. So `shim.c` points the allocator at a buffer the caller already owns and
+// answers the one allocation each call makes by handing that buffer straight back. There is no heap
+// underneath this package at all, which is a stronger statement than `alloc = false` would have been
+// and is the reason the block is absent rather than empty.
+//
+// **`posix` goes the same way, through `QOI_NO_STDIO`.** `qoi_write` and `qoi_read` are the only two
+// functions that touch a file system and they are compiled out; reading a file is `sysl.fs`'s job,
+// and the bytes it hands back are what `decode` wants anyway.
+//
+// **What is NOT here is a `@link` directive**, and the absence is the point of vendoring: the
+// implementation is compiled from the header carried in this package, so there is no external
+// library for the linker to be given (`15 §8`). Compare qcbor, which names `m` because its numeric
+// coercions reach `pow`.

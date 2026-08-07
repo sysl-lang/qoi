@@ -1,0 +1,209 @@
+module sh.sysl.qoi
+
+import sysl.slices.{as_ptr, as_mut_ptr}
+
+// The Quite OK Image format, bound to `qoi.h` sitting beside this file.
+//
+// QOI is lossless RGB and RGBA compression in six hundred lines of C: comparable ratios to PNG, and
+// an order of magnitude faster at both ends. The whole format is four operations over a rolling
+// sixty-four-entry colour index, which is why the reference implementation fits in one header and why
+// vendoring it here costs a consumer nothing.
+//
+// ==This package asks for no capabilities, and that is the interesting part==
+//
+// `package.hocon` has no `requires` block. The binding needs no allocator, opens no file, and asks
+// the operating system for nothing -- which for a library whose entire C API hands back `malloc`'d
+// storage takes some explaining.
+//
+// **All three of `qoi_encode`, `qoi_decode` and `qoi_read` return memory the caller must `free`.** No
+// other binding in this organisation has that shape, and sysl has neither a way to adopt a raw
+// pointer as owned storage nor a `free` to release one. Transcribed straight across, the ownership
+// would have had nowhere to live.
+//
+// **What makes it go away is that QOI lets you replace its allocator.** `QOI_MALLOC` and `QOI_FREE`
+// are macros, and `qoi_encode` computes the size it needs before it asks for it -- so `shim.c` points
+// the allocator at a buffer the caller already owns, and the one allocation each call makes is
+// answered by handing that buffer straight back. Ownership transfer becomes
+// caller-supplies-the-buffer, which is the pattern the rest of these packages already use.
+//
+// So the shape of every call here is: ask how big the answer can be, hand over a slice that size, and
+// get back how much of it was written.
+//
+//     val bound = header.max_encoded()
+//     var out: []u8 = [0; 4096]
+//
+//     val n = encode(pixels, header, out[0..<bound]).unwrap()
+//
+// **`QOI_NO_STDIO` is compiled in**, which is the other half of asking for nothing: `qoi_write` and
+// `qoi_read` are the only two functions that touch a file system, and reading a file is `sysl.fs`'s
+// job. The bytes it hands back are what `decode` wants anyway.
+//
+// ==What a caller still owes==
+//
+// **`encode` reads `width * height * channels` bytes of `pixels`**, and QOI is never told how long
+// that slice is -- the length is implied by the header. A slice shorter than the header describes
+// would be read past the end, so `encode` checks it here and answers `Truncated` rather than letting
+// C find out. `decode` needs no such check: the input length is passed through and QOI respects it.
+//
+// **Nothing in this file allocates**, so an image whose pixels do not fit in storage the caller can
+// spell is an image this binding cannot handle. That is the trade the capability-free package makes,
+// and for the sizes a `[N]u8` covers it is not much of one.
+
+extern "sysl_qoi_max_encoded" c_max_encoded(w: u32, h: u32, channels: u8) -> usize
+extern "sysl_qoi_header" c_header(data: *u8, size: usize, w: *u32, h: *u32,
+                                  ch: *u8, cs: *u8) -> int
+extern "sysl_qoi_encode" c_encode(pixels: *u8, w: u32, h: u32, channels: u8, colorspace: u8,
+                                  out: *u8, cap: usize, len: *usize) -> int
+extern "sysl_qoi_decode" c_decode(data: *u8, size: usize, channels: int,
+                                  out: *u8, cap: usize, len: *usize) -> int
+
+// How the channel values are to be read. QOI stores this in the header and does nothing else with it
+// -- the encoding is byte-identical either way -- so it is a note to whoever displays the image
+// rather than anything the codec acts on.
+enum Colorspace
+    // Gamma-scaled colour channels and a linear alpha channel, which is what almost every image is.
+    Srgb
+
+    // Every channel linear.
+    Linear
+
+// The fourteen bytes at the front of a QOI image: what `header` reads out of one, and what `encode`
+// writes into one.
+//
+// `channels` is 3 for RGB or 4 for RGBA. Anything else is not a QOI image and is refused, rather than
+// being made unrepresentable here -- three and four are what the format writes down, and a binding
+// that renamed them would leave the reader translating between this page and the specification.
+struct Header
+    width: u32
+    height: u32
+    channels: u8
+    colorspace: Colorspace
+
+    // How many bytes of pixels an image this shape holds, which is what `encode` reads and what a
+    // `decode` of it writes.
+    pixel_bytes(self) -> usize = usize(self.width) * usize(self.height) * usize(self.channels)
+
+    // The same count for a decode that forces a different channel count -- see `decode_as`.
+    pixel_bytes_as(self, channels: u8) -> usize =
+        usize(self.width) * usize(self.height) * usize(channels)
+
+    // The largest encoding an image this shape can have, and therefore the size of slice `encode`
+    // can never outgrow. This is `qoi_encode`'s own bound, computed by the C from the same constants
+    // rather than restated here, so it cannot drift from what the encoder will actually ask for.
+    //
+    // It is a ceiling and usually a generous one: an image that compresses at all needs far less.
+    // `encode` answers how much it really used.
+    max_encoded(self) -> usize = c_max_encoded(self.width, self.height, self.channels)
+end Header
+
+// Why an encode or a decode did not happen.
+enum Error
+    // The output slice cannot hold the answer. `needed` is how many bytes would have been enough --
+    // the exact figure QOI asked for, not an estimate, so a caller that guessed too small can resize
+    // once and be done.
+    Short(needed: usize)
+
+    // `encode` only: the `pixels` slice holds fewer bytes than `width * height * channels`. `needed`
+    // is what the header says there should be.
+    Truncated(needed: usize)
+
+    // The header describes no image QOI will encode, or the bytes are not a QOI image. QOI answers
+    // one null pointer to every one of those cases and says no more about it.
+    Invalid
+end Error
+
+private colorspace_byte(c: Colorspace) -> u8
+    c match
+        Srgb -> 0
+        Linear -> 1
+end colorspace_byte
+
+// Anything but 1 is sRGB, and `c_header` has already refused everything above 1.
+private colorspace_of(b: u8) -> Colorspace = if b == 1 then Linear else Srgb
+
+// So that a caller can write `h.colorspace == Srgb` rather than a two-armed `match` for a question
+// with a yes-or-no answer. The comparison is on the byte the format stores, which is the only thing
+// that distinguishes the two.
+impl Eq for Colorspace
+    eq(self, rhs: Colorspace) -> bool = colorspace_byte(self) == colorspace_byte(rhs)
+end Colorspace
+
+// What an encoded image says it is, without decoding any of it.
+//
+// This is the first thing a reader of an unknown byte string wants, because it is what says how much
+// storage a decode will need. Answers `None` for anything that is not a QOI image -- the magic, the
+// dimensions, the channel count and the colourspace are all checked, in the order the decoder checks
+// them, so a byte string this accepts will not then be refused for something the header could have
+// shown.
+header(bytes: []const u8) -> Option[Header]
+    var w: u32 = 0
+    var h: u32 = 0
+    var ch: u8 = 0
+    var cs: u8 = 0
+
+    if c_header(as_ptr(bytes), bytes.len, &w, &h, &ch, &cs) == 1 then
+        Some(Header(w, h, ch, colorspace_of(cs)))
+    else
+        None
+end header
+
+// Encode `pixels` as the image `h` describes, into `out`, and answer how many bytes were written.
+//
+// `pixels` is `width * height * channels` bytes, row-major, with no padding between rows. `out` needs
+// to be at least `h.max_encoded()` bytes for the encode to be certain of fitting; a smaller slice is
+// worth trying if you expect the image to compress, since `Short` says exactly what it would have
+// taken.
+encode(pixels: []const u8, h: Header, out: []u8) -> Result[usize, Error]
+    val want = h.pixel_bytes()
+
+    // QOI is handed a pointer and the dimensions, never the length of the slice, so this is the only
+    // thing standing between a short slice and a read past the end of it.
+    if pixels.len < want then return Err(Truncated(want))
+
+    var len: usize = 0
+
+    val code = c_encode(as_ptr(pixels), h.width, h.height, h.channels, colorspace_byte(h.colorspace),
+                        as_mut_ptr(out), out.len, &len)
+
+    if code == 0 then
+        Ok(len)
+    else if code == 1 then
+        Err(Short(len))
+    else
+        Err(Invalid)
+end encode
+
+// Decode `bytes` into `out`, in whatever channel count the image itself holds, and answer how many
+// bytes of pixels were written.
+//
+// `header(bytes)` first is how you find out how big `out` has to be:
+//
+//     val h = header(bytes).expect("a QOI image")
+//     var pixels: []u8 = [0; 4096]
+//
+//     val n = decode(bytes, pixels[0..<h.pixel_bytes()]).unwrap()
+decode(bytes: []const u8, out: []u8) -> Result[usize, Error] = decode_into(bytes, 0, out)
+
+// Decode `bytes` into `out`, forcing 3 channels (RGB) or 4 (RGBA) whatever the image holds.
+//
+// Forcing 4 on an RGB image fills the alpha channel with 255; forcing 3 on an RGBA image drops the
+// alpha. This is QOI's own conversion, and it is worth having because a caller usually wants one
+// layout for everything it has loaded rather than a branch per image. `h.pixel_bytes_as(channels)`
+// is the size `out` then needs.
+//
+// Anything but 3 or 4 is `Invalid`.
+decode_as(bytes: []const u8, channels: u8, out: []u8) -> Result[usize, Error] =
+    if channels == 3 || channels == 4 then decode_into(bytes, int(channels), out) else Err(Invalid)
+
+private decode_into(bytes: []const u8, channels: int, out: []u8) -> Result[usize, Error]
+    var len: usize = 0
+
+    val code = c_decode(as_ptr(bytes), bytes.len, channels, as_mut_ptr(out), out.len, &len)
+
+    if code == 0 then
+        Ok(len)
+    else if code == 1 then
+        Err(Short(len))
+    else
+        Err(Invalid)
+end decode_into

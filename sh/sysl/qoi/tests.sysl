@@ -1,0 +1,273 @@
+module sh.sysl.qoi
+@tests
+
+import sysl.slices.equal
+
+// What this binding claims, run by `sysl test .`.
+//
+// **The thing under test is the arena, not the codec.** QOI's own encoder and decoder are exercised
+// upstream against a corpus of real images, and repeating that here would test the vendored file
+// rather than the binding. What is untested anywhere else is the decision this package is built on:
+// that pointing `QOI_MALLOC` at a slice the caller owns is enough to make the whole API work with no
+// heap under it. Every case below is chosen to fail if that is not true.
+//
+// The two that carry the most weight are the ones about a slice that is too small and the one about
+// calling twice. A shim that quietly fell back to `malloc` would pass a round trip and fail the first;
+// a shim that forgot to release its one-allocation latch between calls would pass everything except
+// the second.
+//
+// **The pixels are chosen so that only real QOI produces the answer.** Four pixels, of which the
+// third repeats the first -- so the encoding runs through the colour index rather than emitting four
+// literals, and a decoder that mishandled `QOI_OP_INDEX` gives different bytes back. The channel
+// values are all distinct and none is 0 or 255, so a binding that dropped a channel, swapped two, or
+// filled one with a default is visible in the comparison rather than hidden by symmetry.
+
+// A 2x2 RGB image, row-major, no padding. Twelve bytes.
+private rgb_pixels() -> []u8 = [10, 20, 30, 40, 50, 60, 10, 20, 30, 200, 100, 50]
+
+// The same four pixels with an alpha channel, three of them opaque and one not -- the transparent
+// one is what makes a dropped alpha visible.
+private rgba_pixels() -> []u8 =
+    [10, 20, 30, 255, 40, 50, 60, 128, 10, 20, 30, 255, 200, 100, 50, 255]
+
+private rgb_header() -> Header = Header(2, 2, 3, Srgb)
+private rgba_header() -> Header = Header(2, 2, 4, Srgb)
+
+// -- The bound ------------------------------------------------------------------------------------
+
+// The size a caller has to supply is one the caller can work out, and it is QOI's own: fourteen
+// header bytes, eight padding bytes, and a worst case of one tag byte per channel byte. Getting this
+// wrong is not a soft failure -- it is the number that decides whether a single non-growing arena is
+// ever enough, and a bound too small would show up as an encode that mysteriously fails on
+// incompressible images.
+@test("the bound on an encoding is the one QOI computes for itself")
+the_bound_is_qois_own()
+    assert_eq(rgb_header().max_encoded(), 38)
+    assert_eq(rgba_header().max_encoded(), 42)
+
+    // Not the same question: how much of the image there is to read.
+    assert_eq(rgb_header().pixel_bytes(), 12)
+    assert_eq(rgba_header().pixel_bytes(), 16)
+
+    // And what a decode forcing the other channel count would write.
+    assert_eq(rgb_header().pixel_bytes_as(4), 16)
+    assert_eq(rgba_header().pixel_bytes_as(3), 12)
+end the_bound_is_qois_own
+
+// -- Encoding into storage the caller owns --------------------------------------------------------
+
+// The whole design in one assertion: a slice on the stack is all the encoder needs, and what comes
+// back is a length inside it. Nothing was allocated, and nothing has to be freed.
+@test("a caller-supplied slice is all the encoder needs")
+a_caller_supplied_slice_is_enough()
+    val h = rgb_header()
+
+    var out: []u8 = [0; 38]
+
+    val n = encode(rgb_pixels(), h, out).expect("2x2 RGB encodes")
+
+    assert(n > 14, "the encoding is longer than a bare header")
+    assert(n <= h.max_encoded(), "and no longer than the bound said it could be")
+end a_caller_supplied_slice_is_enough
+
+// The arena hands out its buffer once per call and has to forget that it did so before the next one.
+// A latch left set makes the second encode fail while the first succeeded, which is a failure mode
+// nothing else here would catch -- and one that a program encoding more than a single image would
+// meet immediately.
+@test("encoding twice works, so the arena is released between calls")
+the_arena_is_released_between_calls()
+    val h = rgb_header()
+
+    var first: []u8 = [0; 38]
+    var second: []u8 = [0; 38]
+
+    val a = encode(rgb_pixels(), h, first).expect("the first encode")
+    val b = encode(rgb_pixels(), h, second).expect("the second encode")
+
+    assert_eq(a, b)
+    assert(equal(first[0..<a], second[0..<b]), "and the same input gives the same bytes")
+end the_arena_is_released_between_calls
+
+// -- What was encoded -----------------------------------------------------------------------------
+
+// The header is readable without decoding anything, and it says what went in. The colourspace is the
+// field with no effect on the encoding at all, so it is the one that a shim dropping an argument
+// would silently default -- which is why it is checked in both of its values.
+@test("the header says what was encoded, colourspace included")
+the_header_says_what_was_encoded()
+    var out: []u8 = [0; 42]
+
+    val n = encode(rgb_pixels(), rgb_header(), out).expect("2x2 RGB encodes")
+    val h = header(out[0..<n]).expect("what was just encoded is a QOI image")
+
+    assert_eq(h.width, 2)
+    assert_eq(h.height, 2)
+    assert_eq(h.channels, 3)
+    assert(h.colorspace == Srgb, "the colourspace that went in comes back")
+
+    val m = encode(rgba_pixels(), Header(2, 2, 4, Linear), out).expect("2x2 RGBA encodes")
+    val g = header(out[0..<m]).expect("and so is that")
+
+    assert_eq(g.channels, 4)
+    assert(g.colorspace == Linear, "including the other colourspace")
+end the_header_says_what_was_encoded
+
+// -- Round trips ----------------------------------------------------------------------------------
+
+@test("a round trip gives the pixels back, three channels and four")
+a_round_trip_gives_the_pixels_back()
+    var out: []u8 = [0; 42]
+    var back: []u8 = [0; 16]
+
+    val n = encode(rgb_pixels(), rgb_header(), out).expect("2x2 RGB encodes")
+    val p = decode(out[0..<n], back).expect("and decodes")
+
+    assert_eq(p, 12)
+    assert(equal(back[0..<12], rgb_pixels()), "the three-channel pixels survive the trip")
+
+    val m = encode(rgba_pixels(), rgba_header(), out).expect("2x2 RGBA encodes")
+    val q = decode(out[0..<m], back).expect("and decodes")
+
+    assert_eq(q, 16)
+    assert(equal(back[0..<16], rgba_pixels()), "and so do the four-channel ones, alpha included")
+end a_round_trip_gives_the_pixels_back
+
+// QOI's own conversion, which is worth binding because a caller usually wants one layout for
+// everything it has loaded rather than a branch per image. Forcing four onto an RGB image fills alpha
+// with 255; forcing three onto an RGBA image drops it -- and the transparent pixel in `rgba_pixels`
+// is what makes the second of those visible.
+@test("decode_as forces the channel count either way")
+decode_as_forces_the_channel_count()
+    var out: []u8 = [0; 42]
+    var back: []u8 = [0; 16]
+
+    val n = encode(rgb_pixels(), rgb_header(), out).expect("2x2 RGB encodes")
+    val p = decode_as(out[0..<n], 4, back).expect("and decodes as RGBA")
+
+    assert_eq(p, 16)
+    assert(equal(back[0..<4], [10, 20, 30, 255]), "the alpha a three-channel image does not have is opaque")
+
+    val m = encode(rgba_pixels(), rgba_header(), out).expect("2x2 RGBA encodes")
+    val q = decode_as(out[0..<m], 3, back).expect("and decodes as RGB")
+
+    assert_eq(q, 12)
+    assert(equal(back[0..<12], rgb_pixels()), "and the alpha is dropped rather than folded in")
+
+    val refused = decode_as(out[0..<m], 2, back) match
+        Err(Invalid) -> true
+        _ -> false
+
+    assert(refused, "two channels is not a thing QOI converts to")
+end decode_as_forces_the_channel_count
+
+// -- Refusals -------------------------------------------------------------------------------------
+
+// **This is the assertion the whole package rests on.** If anything ever reached the heap, an
+// undersized slice would encode successfully into storage the caller never gave -- so a `Short` here
+// is the only direct evidence that the arena is the only allocator in play. The number matters as
+// much as the refusal: it is what QOI actually asked for, so a caller can resize once instead of
+// doubling until it fits.
+@test("a slice too small is refused, and says what would have been enough")
+a_slice_too_small_is_refused()
+    val h = rgb_header()
+
+    var tiny: []u8 = [0; 8]
+    var empty: []u8 = [0; 0]
+
+    val needed: usize = encode(rgb_pixels(), h, tiny) match
+        Err(Short(n)) -> n
+        _ -> 0
+
+    assert_eq(needed, h.max_encoded())
+
+    // A slice of no length at all takes the same path rather than a different one, which is worth
+    // pinning because a null pointer is what an empty slice hands the C.
+    val from_empty: usize = encode(rgb_pixels(), h, empty) match
+        Err(Short(n)) -> n
+        _ -> 0
+
+    assert_eq(from_empty, h.max_encoded())
+
+    // And the same on the way back: a decode needs somewhere to put the pixels.
+    var out: []u8 = [0; 38]
+
+    val n = encode(rgb_pixels(), h, out).expect("2x2 RGB encodes")
+
+    val short_decode: usize = decode(out[0..<n], tiny) match
+        Err(Short(k)) -> k
+        _ -> 0
+
+    assert_eq(short_decode, 12)
+end a_slice_too_small_is_refused
+
+// QOI is handed a pointer and the dimensions, never a length, so a `pixels` slice shorter than the
+// header describes would be read past the end. Nothing in C would notice; this is checked in sysl
+// before the call, and it is the one refusal here that is the binding's own rather than QOI's.
+@test("pixels shorter than the header describes are refused before C sees them")
+pixels_shorter_than_the_header_are_refused()
+    var out: []u8 = [0; 38]
+    var eleven: []u8 = [0; 11]
+
+    val needed: usize = encode(eleven, rgb_header(), out) match
+        Err(Truncated(n)) -> n
+        _ -> 0
+
+    assert_eq(needed, 12)
+
+    // One byte more and it is an image, which is what says the boundary is where it should be rather
+    // than merely somewhere.
+    var twelve: []u8 = [0; 12]
+
+    assert(encode(twelve, rgb_header(), out).is_ok(), "twelve bytes is a 2x2 RGB image")
+end pixels_shorter_than_the_header_are_refused
+
+// A header describing an image QOI will not encode. Zero in either dimension and a channel count
+// outside three-or-four are the cases the encoder checks, and it answers a null pointer to all of
+// them without distinguishing -- so `Invalid` is as much as this binding can honestly say.
+@test("a header describing no image is refused")
+a_header_describing_no_image_is_refused()
+    var out: []u8 = [0; 64]
+    var pixels: []u8 = [0; 64]
+
+    val zero_width = encode(pixels, Header(0, 2, 3, Srgb), out) match
+        Err(Invalid) -> true
+        _ -> false
+
+    val zero_height = encode(pixels, Header(2, 0, 3, Srgb), out) match
+        Err(Invalid) -> true
+        _ -> false
+
+    val five_channels = encode(pixels, Header(2, 2, 5, Srgb), out) match
+        Err(Invalid) -> true
+        _ -> false
+
+    assert(zero_width, "an image no pixels wide is not an image")
+    assert(zero_height, "nor one no pixels tall")
+    assert(five_channels, "and QOI has three channels or four")
+end a_header_describing_no_image_is_refused
+
+// Bytes that are not a QOI image, in the two shapes that matter: too short to hold a header at all,
+// and long enough but not QOI. Both have to be refused by `header` and by `decode`, and a `header`
+// that accepted something `decode` then rejected would send a caller looking for a bug in its own
+// arithmetic.
+@test("bytes that are not a QOI image are refused by both ends")
+bytes_that_are_not_an_image_are_refused()
+    var back: []u8 = [0; 16]
+
+    var short: []u8 = [113, 111, 105, 102]
+    var wrong: []u8 = [0; 32]
+
+    assert(header(short).is_none(), "four bytes cannot hold a header")
+    assert(header(wrong).is_none(), "and thirty-two zero bytes are not an image")
+
+    val short_decode = decode(short, back) match
+        Err(Invalid) -> true
+        _ -> false
+
+    val wrong_decode = decode(wrong, back) match
+        Err(Invalid) -> true
+        _ -> false
+
+    assert(short_decode, "decode agrees about the short one")
+    assert(wrong_decode, "and about the wrong one")
+end bytes_that_are_not_an_image_are_refused
