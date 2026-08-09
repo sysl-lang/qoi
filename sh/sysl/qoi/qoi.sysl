@@ -121,12 +121,10 @@ end colorspace_byte
 // Anything but 1 is sRGB, and `c_header` has already refused everything above 1.
 private colorspace_of(b: u8) -> Colorspace = if b == 1 then Linear else Srgb
 
-// So that a caller can write `h.colorspace == Srgb` rather than a two-armed `match` for a question
-// with a yes-or-no answer. The comparison is on the byte the format stores, which is the only thing
-// that distinguishes the two.
-impl Eq for Colorspace
-    eq(self, rhs: Colorspace) -> bool = colorspace_byte(self) == colorspace_byte(rhs)
-end Colorspace
+// A caller writes `h.colorspace == Srgb` rather than a two-armed `match` for a question with a
+// yes-or-no answer. This package used to carry an `impl Eq` saying so; sysl 0.0.34 makes a simple
+// enum a member of `Eq` by rule, since its value is its discriminant, so the block is gone and the
+// comparison is the one it was performing.
 
 // What an encoded image says it is, without decoding any of it.
 //
