@@ -32,7 +32,7 @@ package {
 // bytes it was handed. It opens no file, reads no clock and asks the operating system for nothing.
 // monocypher is in the same position and says nothing for the same reason.
 //
-// **The one it looked like it would have to claim is `alloc`.** All three of `qoi_encode`,
+// **The one it looked like it would have to claim is `heap`.** All three of `qoi_encode`,
 // `qoi_decode` and `qoi_read` `malloc` their result and hand the caller a pointer to free -- the one
 // API shape no other package here has, and one sysl cannot express, since there is no way to adopt a
 // raw pointer as owned storage and no `free` to release it.
@@ -40,7 +40,7 @@ package {
 // `QOI_MALLOC` and `QOI_FREE` are overridable macros, and `qoi_encode` computes the size it needs
 // before it asks for it. So `shim.c` points the allocator at a buffer the caller already owns and
 // answers the one allocation each call makes by handing that buffer straight back. There is no heap
-// underneath this package at all, which is a stronger statement than `alloc = false` would have been
+// underneath this package at all, which is a stronger statement than `heap = false` would have been
 // and is the reason the block is absent rather than empty.
 //
 // **`posix` goes the same way, through `QOI_NO_STDIO`.** `qoi_write` and `qoi_read` are the only two
