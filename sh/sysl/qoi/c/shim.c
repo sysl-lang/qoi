@@ -19,11 +19,11 @@
  *
  *   - **`qoi_desc` is a struct passed by pointer, and a layout only the header
  *     knows.** Its four fields cross as four scalars instead.
- *   - **`QOI_HEADER_SIZE`, `QOI_MAGIC` and `QOI_PIXELS_MAX` are `#define`s.** A
- *     macro has no symbol, so there is nothing for a linker to resolve and
- *     nothing for `extern` to name. Everything below uses the header's own
- *     macros rather than transcribing their values, which is the whole reason
- *     this file is compiled together with the implementation.
+ *   - **`QOI_MAGIC` is a `#define` over an expression, and the checks it appears
+ *     in are QOI's own.** `QOI_HEADER_SIZE`, `QOI_PIXELS_MAX`, `QOI_SRGB` and
+ *     `QOI_LINEAR` are `#define`s too, and those the sysl side now asks for
+ *     directly with `c const` -- what is left here is the *use* of them, in
+ *     validation written in the order QOI validates.
  *   - **`qoi_encode` reports its length through an `int *`.** That comes back as
  *     a `size_t` out-param, alongside a status the sysl side turns into a
  *     `Result`.
@@ -90,10 +90,12 @@ static void *sysl_qoi_alloc(size_t sz) {
 #define QOI_IMPLEMENTATION
 #include "qoi.h"
 
-/* What the sysl side matches on. */
-#define SYSL_QOI_OK      0
-#define SYSL_QOI_SHORT   1
-#define SYSL_QOI_INVALID 2
+/* What the sysl side matches on. It is in `shim.h` so that the `c const` block in
+ * `c.sysl` can ask for each by name -- a number defined only here is one the
+ * probe translation unit cannot see, and the sysl side would be writing 0, 1 and
+ * 2 down a second time.
+ */
+#include "shim.h"
 
 static void arena_open(unsigned char *buf, size_t cap) {
     g_buf = buf;

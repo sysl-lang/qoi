@@ -9,11 +9,11 @@
 // arrived against `sysl.sum`, and compiles it as more modules.
 //
 //     dependencies {
-//       qoi { git = "github.com/sysl-lang/qoi", version = "0.1.1" }
+//       qoi { git = "github.com/sysl-lang/qoi", version = "0.2.0" }
 //     }
 //
 // The coordinate is identity rather than a URL, so it carries no `https://`, and the version is the
-// tag `v0.1.1` on this repository. `build-lib` and `--lib` still work and are what the tests here
+// tag `v0.2.0` on this repository. `build-lib` and `--lib` still work and are what the tests here
 // use, but they are no longer the only way in.
 
 // `name` is the package; the module a program imports is `sh.sysl.qoi`, and the two are deliberately
@@ -23,7 +23,7 @@
 
 package {
   name    = "qoi"
-  version = "0.1.1"
+  version = "0.2.0"
 }
 
 // **There is deliberately no `requires` block, and for this package that took work.**

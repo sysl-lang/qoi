@@ -1,5 +1,6 @@
 module sh.sysl.qoi
 
+import sh.sysl.qoi.c
 import sysl.slices.{as_ptr, as_mut_ptr}
 
 // The Quite OK Image format, bound to `qoi.h` sitting beside this file.
@@ -49,14 +50,6 @@ import sysl.slices.{as_ptr, as_mut_ptr}
 // spell is an image this binding cannot handle. That is the trade the capability-free package makes,
 // and for the sizes a `[N]u8` covers it is not much of one.
 
-extern "sysl_qoi_max_encoded" c_max_encoded(w: u32, h: u32, channels: u8) -> usize
-extern "sysl_qoi_header" c_header(data: *u8, size: usize, w: *u32, h: *u32,
-                                  ch: *u8, cs: *u8) -> int
-extern "sysl_qoi_encode" c_encode(pixels: *u8, w: u32, h: u32, channels: u8, colorspace: u8,
-                                  out: *u8, cap: usize, len: *usize) -> int
-extern "sysl_qoi_decode" c_decode(data: *u8, size: usize, channels: int,
-                                  out: *u8, cap: usize, len: *usize) -> int
-
 // How the channel values are to be read. QOI stores this in the header and does nothing else with it
 // -- the encoding is byte-identical either way -- so it is a note to whoever displays the image
 // rather than anything the codec acts on.
@@ -66,6 +59,20 @@ enum Colorspace
 
     // Every channel linear.
     Linear
+
+    // The byte QOI writes into the header for this. **`QOI_SRGB` and `QOI_LINEAR` are asked for by
+    // name** rather than written here as a 0 and a 1: the two-arm `match` this replaced was correct
+    // and was also an agreement with a header that nothing compared it against.
+    code(self) -> u8 = self match
+        Srgb   -> c.SRGB
+        Linear -> c.LINEAR
+
+    // Which colourspace a header byte names. Anything else is sRGB, and `c.header` has already
+    // refused every byte above `LINEAR`, so that arm is unreachable in practice and is here because a
+    // `match` on a number has to say what it does with the rest of them.
+    of(b: u8) -> Colorspace = b match
+        c.LINEAR -> Linear
+        _        -> Srgb
 
 // The fourteen bytes at the front of a QOI image: what `header` reads out of one, and what `encode`
 // writes into one.
@@ -93,7 +100,7 @@ struct Header
     //
     // It is a ceiling and usually a generous one: an image that compresses at all needs far less.
     // `encode` answers how much it really used.
-    max_encoded(self) -> usize = c_max_encoded(self.width, self.height, self.channels)
+    max_encoded(self) -> usize = c.max_encoded(self.width, self.height, self.channels)
 end Header
 
 // Why an encode or a decode did not happen.
@@ -112,19 +119,18 @@ enum Error
     Invalid
 end Error
 
-private colorspace_byte(c: Colorspace) -> u8
-    c match
-        Srgb -> 0
-        Linear -> 1
-end colorspace_byte
-
-// Anything but 1 is sRGB, and `c_header` has already refused everything above 1.
-private colorspace_of(b: u8) -> Colorspace = if b == 1 then Linear else Srgb
-
 // A caller writes `h.colorspace == Srgb` rather than a two-armed `match` for a question with a
 // yes-or-no answer. This package used to carry an `impl Eq` saying so; sysl 0.0.34 makes a simple
 // enum a member of `Eq` by rule, since its value is its discriminant, so the block is gone and the
 // comparison is the one it was performing.
+
+// What the shim answered, as a `Result` carrying the length it reported. **The three statuses are
+// `c const`s out of `shim.h`** rather than a 0, a 1 and an else — they are the shim's agreement with
+// this file, and it is now one written down in a place both sides read.
+private answered(code: int, len: usize) -> Result[usize, Error] = code match
+    c.OK    -> Ok(len)
+    c.SHORT -> Err(Short(len))
+    _       -> Err(Invalid)
 
 // What an encoded image says it is, without decoding any of it.
 //
@@ -139,8 +145,8 @@ header(bytes: []const u8) -> Option[Header]
     var ch: u8 = 0
     var cs: u8 = 0
 
-    if c_header(as_ptr(bytes), bytes.len, &w, &h, &ch, &cs) == 1 then
-        Some(Header(w, h, ch, colorspace_of(cs)))
+    if c.header(as_ptr(bytes), bytes.len, &w, &h, &ch, &cs) == 1 then
+        Some(Header(w, h, ch, Colorspace.of(cs)))
     else
         None
 end header
@@ -160,15 +166,10 @@ encode(pixels: []const u8, h: Header, out: []u8) -> Result[usize, Error]
 
     var len: usize = 0
 
-    val code = c_encode(as_ptr(pixels), h.width, h.height, h.channels, colorspace_byte(h.colorspace),
+    val code = c.encode(as_ptr(pixels), h.width, h.height, h.channels, h.colorspace.code(),
                         as_mut_ptr(out), out.len, &len)
 
-    if code == 0 then
-        Ok(len)
-    else if code == 1 then
-        Err(Short(len))
-    else
-        Err(Invalid)
+    answered(code, len)
 end encode
 
 // Decode `bytes` into `out`, in whatever channel count the image itself holds, and answer how many
@@ -196,12 +197,7 @@ decode_as(bytes: []const u8, channels: u8, out: []u8) -> Result[usize, Error] =
 private decode_into(bytes: []const u8, channels: int, out: []u8) -> Result[usize, Error]
     var len: usize = 0
 
-    val code = c_decode(as_ptr(bytes), bytes.len, channels, as_mut_ptr(out), out.len, &len)
+    val code = c.decode(as_ptr(bytes), bytes.len, channels, as_mut_ptr(out), out.len, &len)
 
-    if code == 0 then
-        Ok(len)
-    else if code == 1 then
-        Err(Short(len))
-    else
-        Err(Invalid)
+    answered(code, len)
 end decode_into

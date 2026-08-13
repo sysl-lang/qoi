@@ -112,6 +112,19 @@ the_header_says_what_was_encoded()
     assert(g.colorspace == Linear, "including the other colourspace")
 end the_header_says_what_was_encoded
 
+// **The round trip above cannot catch both halves being wrong together**, which is the one thing a
+// symmetric pair of `match`es is blind to: `Colorspace.code` and `Colorspace.of` would agree perfectly
+// if each named the other's constant. `c const` guarantees the *number* is whatever `qoi.h` says for
+// the name asked for, and not that the right name was asked for.
+//
+// So these are the two values the format states outright.
+@test("the colourspace byte is the one the format writes down")
+the_colourspace_byte_is_the_formats() =
+    assert_eq(Srgb.code(), 0)
+    assert_eq(Linear.code(), 1)
+    assert(Colorspace.of(0) == Srgb, "and reading one back agrees")
+    assert(Colorspace.of(1) == Linear, "on both")
+
 // -- Round trips ----------------------------------------------------------------------------------
 
 @test("a round trip gives the pixels back, three channels and four")

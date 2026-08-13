@@ -15,15 +15,30 @@ takes some doing, and how it is done is the interesting part of this repository.
 ```
 sh/sysl/qoi/
     qoi.sysl            the binding
-    qoi.h               vendored QOI, unmodified — phoboslab/qoi, MIT
-    shim.c              the arena, and the C that only C can reach
-    tests.sysl          10 tests, most of them about the arena rather than the codec
+    tests.sysl          11 tests, most of them about the arena rather than the codec
+    c/
+        c.sysl          the shim as C declares it, and the numbers its headers compute
+        shim.c          the arena, and the C that only C can reach
+        shim.h          the three statuses the shim answers, so both languages can name them
+        qoi.h           vendored QOI, unmodified — phoboslab/qoi, MIT
 package.hocon           who this package is, and what it needs of the machine
 ```
 
-The module is **`sh.sysl.qoi`**, and the three directories are that name: a dotted module name
-mirrors its path from the library root. The prefix is the reverse-DNS of `sysl.sh`, so that a package
-claims a name nobody else will mint rather than the top-level word `qoi`.
+The module is **`sh.sysl.qoi`**, and the directories are that name: a dotted module name mirrors its
+path from the library root. The prefix is the reverse-DNS of `sysl.sh`, so that a package claims a name
+nobody else will mint rather than the top-level word `qoi`.
+
+**Everything that is C lives in `c/`**, module `sh.sysl.qoi.c` — the two headers, `shim.c`, and the
+sysl declarations over them. That is the two-layer shape every binding in this organisation uses, and
+the point of it is that the two halves have different jobs: the `c` layer has to be *faithful*, because
+a signature that disagrees with the C links perfectly and corrupts the call at run time, and the layer
+above it has to be *pleasant*, which is a different question that would otherwise be answered in the
+same breath. A program imports `sh.sysl.qoi`; one that wants the shim's own spelling may import
+`sh.sysl.qoi.c` as well.
+
+**Here the raw layer is unusual: every function in it is a shim.** QOI's own three entry points all
+`malloc` their result, so there is no upstream symbol this binding can name directly — the C API it
+talks to is `shim.c`'s. The rest of this file explains why.
 
 ## Using it
 
@@ -31,12 +46,12 @@ Name it in your project's `package.hocon` and `sysl build` fetches it:
 
 ```hocon
 dependencies {
-  qoi { git = "github.com/sysl-lang/qoi", version = "0.1.1" }
+  qoi { git = "github.com/sysl-lang/qoi", version = "0.2.0" }
 }
 ```
 
 The coordinate is an identity rather than a URL, so it carries no `https://`, and `version` is the
-tag `v0.1.1` here.
+tag `v0.2.0` here.
 
 Or point at it directly, which needs no fetching and is what this repository's own tests do. Either a
 built artifact or the source tree works, and they are the same road:
@@ -201,9 +216,21 @@ asked for more than it had, it records the size, and the caller is told `Short(8
 merely that something went wrong. That number is what QOI actually asked for, not an estimate.
 
 **The rest is the ordinary business of a shim** (`15 §7`) — `qoi_desc` is a layout only the header
-knows, so its four fields cross as four scalars; `QOI_MAGIC`, `QOI_HEADER_SIZE` and `QOI_PIXELS_MAX`
-are `#define`s with no symbols to link against, so everything that needs them is computed on the C
-side rather than having its value transcribed into sysl.
+knows, so its four fields cross as four scalars, and the validation that uses `QOI_MAGIC`,
+`QOI_HEADER_SIZE` and `QOI_PIXELS_MAX` is written in C, in the order QOI validates.
+
+**The constants themselves are asked for with `c const`, not wrapped in a function.** `QOI_SRGB` and
+`QOI_LINEAR` were a `0` and a `1` in a sysl `match` until this package took the two-layer shape;
+`Colorspace.code` names them now, so both languages read the same header. The same goes for the shim's
+three statuses, which is why `shim.h` exists: a number defined only in a `.c` is one the `c const`
+probe translation unit cannot see, and the sysl side would be writing 0, 1 and 2 down a second time.
+
+**Two of QOI's constants are out of reach, and it is worth knowing why before hunting for them.**
+`QOI_HEADER_SIZE` and `QOI_PIXELS_MAX` are defined *inside* `qoi.h`'s `QOI_IMPLEMENTATION` guard, so a
+translation unit that merely includes the header — which is exactly what a `c const` block is — cannot
+see them. They are QOI's internals rather than its interface. Nothing is lost: `shim.c` is inside that
+guard and both numbers are enforced there, and what a sysl caller needs is `max_encoded()`, which asks
+the same C for the figure it will really want.
 
 **The one check that is the binding's own** is `Truncated`. QOI is handed a pointer and the
 dimensions and never a length, so a `pixels` slice shorter than the header describes would be read
@@ -239,6 +266,11 @@ most of the weight:
   that quietly fell back to `malloc` passes a round trip and fails this;
 - **encoding twice works** — a latch left set after the first allocation passes everything else and
   fails this, which is what a program encoding more than one image would meet immediately.
+
+One more was added when the constants moved to `c const`: **the colourspace byte is checked against the
+number the format states**, not only round-tripped. `Colorspace.code` and `Colorspace.of` are two
+`match`es over one correspondence and would agree perfectly if each named the other's constant, which
+is the one mistake a round trip cannot see.
 
 The pixels are picked so that only real QOI produces the answer: four pixels of which the third
 repeats the first, so the encoding runs through the colour index rather than emitting literals, and

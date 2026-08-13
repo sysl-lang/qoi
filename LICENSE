@@ -1,7 +1,7 @@
 This package contains two things under two licences.
 
 ================================================================================
-sh/sysl/qoi/qoi.h — vendored, MIT
+sh/sysl/qoi/c/qoi.h — vendored, MIT
 ================================================================================
 
 MIT License
@@ -27,7 +27,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
-sh/sysl/qoi/qoi.sysl, shim.c, tests.sysl and everything else here — ISC
+sh/sysl/qoi/qoi.sysl, tests.sysl, c/c.sysl, c/shim.c, c/shim.h and
+everything else here — ISC
 ================================================================================
 
 Copyright (c) 2026 Edward A. Maxedon, Sr.

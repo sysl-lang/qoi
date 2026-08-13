@@ -1,0 +1,83 @@
+// QOI as C reaches it: the four shim entry points, and the numbers its two headers compute.
+//
+// **Everything that is C lives in this directory** — `qoi.h` as it comes from upstream, the `shim.c`
+// that compiles it and answers for the parts sysl cannot reach, the `shim.h` that says what those
+// answers are, and this file of declarations over them. Nothing here is meant to be called by a
+// program: a status is a bare `int`, an image is a pointer and a capacity, and a length comes back
+// through an out-parameter. The module above this one turns those into `Result`s and is what an
+// application imports.
+//
+// The split keeps two jobs apart. This one has to be **faithful** — a signature that disagrees with
+// the C links perfectly and corrupts the call at run time, and nothing in this arrangement checks one
+// against the other, so each declaration below was read out of `shim.c` rather than remembered. The
+// other one has to be **pleasant**, which is a different question and would otherwise be answered in
+// the same breath.
+//
+// **Every function here is a shim, which is unusual and is the whole story of this package.** QOI's
+// own three entry points all `malloc` their result and hand the caller a pointer to free, and sysl has
+// no way to adopt one; `shim.c` points QOI's allocator at a buffer the caller already owns instead. So
+// there is nothing to declare an `extern` over — the C API this binding talks to is the shim's, not
+// QOI's.
+
+module sh.sysl.qoi.c
+
+// Two headers, because the numbers below come from two places: QOI's own, and the shim's account of
+// what it answers. Both sit in this directory, so neither needs an include path.
+//
+// **No compile-time options are set for the probe, and that is a judgement rather than an oversight.**
+// `QOI_MALLOC`, `QOI_FREE`, `QOI_NO_STDIO` and `QOI_IMPLEMENTATION` change what `shim.c` *compiles*
+// and change no declaration and no constant, so a translation unit that reads `qoi.h` without them
+// still computes the same four numbers. Where an option does reach a constant — termbox2's
+// `TB_OPT_ATTR_W` is the case — it has to be written somewhere both readers include.
+@include("qoi.h")
+@include("shim.h")
+
+// ## The numbers, asked for rather than written down
+//
+// `15 §7` calls a transcribed constant "correct on one machine" with "nothing checking it". Two of
+// these were transcribed here until now: the colourspace byte, as a `0` and a `1` in a `match`, and
+// the shim's three statuses, as a `0` and a `1` and an else.
+
+// What the colourspace byte in a QOI header means. QOI stores it and does nothing else with it.
+c const
+    SRGB:   u8 = "QOI_SRGB"
+    LINEAR: u8 = "QOI_LINEAR"
+
+// **`QOI_HEADER_SIZE` and `QOI_PIXELS_MAX` are deliberately NOT here, and the reason is worth knowing
+// before reaching for one:** both are defined inside `qoi.h`'s `QOI_IMPLEMENTATION` guard, so a
+// translation unit that merely includes the header cannot see them — and a `c const` block is exactly
+// such a translation unit. They are QOI's internals rather than its interface, and asking for them
+// would mean the probe had to compile the whole implementation to read two numbers.
+//
+// Nothing is lost: `shim.c` is inside that guard and uses both, which is where the fourteen-byte
+// header length and the pixel ceiling are actually enforced. What a sysl caller needs is
+// `Header.max_encoded`, which asks the same C for the number it will really want.
+
+// What `encode` and `decode` answer. **These are the shim's numbers rather than QOI's**, because QOI
+// answers one null pointer to a buffer that was too small and to input it will not encode; only the
+// allocator knows which happened. `shim.h` says the same thing from the other side.
+c const
+    OK:      int = "SYSL_QOI_OK"
+    SHORT:   int = "SYSL_QOI_SHORT"
+    INVALID: int = "SYSL_QOI_INVALID"
+
+// ## The four entry points
+//
+// Each is `shim.c`'s, and its comment there says why the shape is what it is. In outline: a caller
+// supplies the output slice, and a length comes back through `len` beside a status.
+
+// `qoi_encode`'s own bound on how large an encoding of an image this shape can be, computed from the
+// header's macros rather than restated in sysl, so it cannot drift from what the encoder will ask for.
+extern "sysl_qoi_max_encoded" max_encoded(w: u32, h: u32, channels: u8) -> usize
+
+// The fourteen header bytes, split into four scalars so that `qoi_desc` — a layout only the header
+// knows — never crosses. Answers 1 and fills them in, or 0 and touches nothing.
+extern "sysl_qoi_header" header(data: *u8, size: usize, w: *u32, h: *u32,
+                                ch: *u8, cs: *u8) -> int
+
+extern "sysl_qoi_encode" encode(pixels: *u8, w: u32, h: u32, channels: u8, colorspace: u8,
+                                out: *u8, cap: usize, len: *usize) -> int
+
+// `channels` is 0 for whatever the image holds, or 3 or 4 to force it.
+extern "sysl_qoi_decode" decode(data: *u8, size: usize, channels: int,
+                                out: *u8, cap: usize, len: *usize) -> int
