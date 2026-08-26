@@ -1,7 +1,6 @@
 module sh.sysl.qoi
 @tests
 
-import sysl.slices.equal
 
 // What this binding claims, run by `sysl test .`.
 //
@@ -85,7 +84,7 @@ the_arena_is_released_between_calls()
     val b = encode(rgb_pixels(), h, second).expect("the second encode")
 
     assert_eq(a, b)
-    assert(equal(first[0..<a], second[0..<b]), "and the same input gives the same bytes")
+    assert_eq(first[0..<a], second[0..<b], "and the same input gives the same bytes")
 end the_arena_is_released_between_calls
 
 // -- What was encoded -----------------------------------------------------------------------------
@@ -136,13 +135,13 @@ a_round_trip_gives_the_pixels_back()
     val p = decode(out[0..<n], back).expect("and decodes")
 
     assert_eq(p, 12)
-    assert(equal(back[0..<12], rgb_pixels()), "the three-channel pixels survive the trip")
+    assert_eq(back[0..<12], rgb_pixels(), "the three-channel pixels survive the trip")
 
     val m = encode(rgba_pixels(), rgba_header(), out).expect("2x2 RGBA encodes")
     val q = decode(out[0..<m], back).expect("and decodes")
 
     assert_eq(q, 16)
-    assert(equal(back[0..<16], rgba_pixels()), "and so do the four-channel ones, alpha included")
+    assert_eq(back[0..<16], rgba_pixels(), "and so do the four-channel ones, alpha included")
 end a_round_trip_gives_the_pixels_back
 
 // QOI's own conversion, which is worth binding because a caller usually wants one layout for
@@ -158,13 +157,13 @@ decode_as_forces_the_channel_count()
     val p = decode_as(out[0..<n], 4, back).expect("and decodes as RGBA")
 
     assert_eq(p, 16)
-    assert(equal(back[0..<4], [10, 20, 30, 255]), "the alpha a three-channel image does not have is opaque")
+    assert_eq(back[0..<4], [10, 20, 30, 255], "the alpha a three-channel image does not have is opaque")
 
     val m = encode(rgba_pixels(), rgba_header(), out).expect("2x2 RGBA encodes")
     val q = decode_as(out[0..<m], 3, back).expect("and decodes as RGB")
 
     assert_eq(q, 12)
-    assert(equal(back[0..<12], rgb_pixels()), "and the alpha is dropped rather than folded in")
+    assert_eq(back[0..<12], rgb_pixels(), "and the alpha is dropped rather than folded in")
 
     val refused = decode_as(out[0..<m], 2, back) match
         Err(Invalid) -> true
