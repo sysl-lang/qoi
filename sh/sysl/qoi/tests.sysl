@@ -61,7 +61,7 @@ end the_bound_is_qois_own
 a_caller_supplied_slice_is_enough()
     val h = rgb_header()
 
-    var out: []u8 = [0; 38]
+    val out: []u8 = [0; 38]
 
     val n = encode(rgb_pixels(), h, out).expect("2x2 RGB encodes")
 
@@ -77,8 +77,8 @@ end a_caller_supplied_slice_is_enough
 the_arena_is_released_between_calls()
     val h = rgb_header()
 
-    var first: []u8 = [0; 38]
-    var second: []u8 = [0; 38]
+    val first: []u8 = [0; 38]
+    val second: []u8 = [0; 38]
 
     val a = encode(rgb_pixels(), h, first).expect("the first encode")
     val b = encode(rgb_pixels(), h, second).expect("the second encode")
@@ -94,10 +94,10 @@ end the_arena_is_released_between_calls
 // would silently default -- which is why it is checked in both of its values.
 @test("the header says what was encoded, colourspace included")
 the_header_says_what_was_encoded()
-    var out: []u8 = [0; 42]
+    val out: []u8 = [0; 42]
 
     val n = encode(rgb_pixels(), rgb_header(), out).expect("2x2 RGB encodes")
-    val h = header(out[0..<n]).expect("what was just encoded is a QOI image")
+    val h =header(out[0..<n]).expect("what was just encoded is a QOI image")
 
     assert_eq(h.width, 2)
     assert_eq(h.height, 2)
@@ -128,8 +128,8 @@ the_colourspace_byte_is_the_formats() =
 
 @test("a round trip gives the pixels back, three channels and four")
 a_round_trip_gives_the_pixels_back()
-    var out: []u8 = [0; 42]
-    var back: []u8 = [0; 16]
+    val out: []u8 = [0; 42]
+    val back: []u8 = [0; 16]
 
     val n = encode(rgb_pixels(), rgb_header(), out).expect("2x2 RGB encodes")
     val p = decode(out[0..<n], back).expect("and decodes")
@@ -150,8 +150,8 @@ end a_round_trip_gives_the_pixels_back
 // is what makes the second of those visible.
 @test("decode_as forces the channel count either way")
 decode_as_forces_the_channel_count()
-    var out: []u8 = [0; 42]
-    var back: []u8 = [0; 16]
+    val out: []u8 = [0; 42]
+    val back: []u8 = [0; 16]
 
     val n = encode(rgb_pixels(), rgb_header(), out).expect("2x2 RGB encodes")
     val p = decode_as(out[0..<n], 4, back).expect("and decodes as RGBA")
@@ -183,8 +183,8 @@ end decode_as_forces_the_channel_count
 a_slice_too_small_is_refused()
     val h = rgb_header()
 
-    var tiny: []u8 = [0; 8]
-    var empty: []u8 = [0; 0]
+    val tiny: []u8 = [0; 8]
+    val empty: []u8 = [0; 0]
 
     val needed: usize = encode(rgb_pixels(), h, tiny) match
         Err(Short(n)) -> n
@@ -201,7 +201,7 @@ a_slice_too_small_is_refused()
     assert_eq(from_empty, h.max_encoded())
 
     // And the same on the way back: a decode needs somewhere to put the pixels.
-    var out: []u8 = [0; 38]
+    val out: []u8 = [0; 38]
 
     val n = encode(rgb_pixels(), h, out).expect("2x2 RGB encodes")
 
@@ -217,8 +217,8 @@ end a_slice_too_small_is_refused
 // before the call, and it is the one refusal here that is the binding's own rather than QOI's.
 @test("pixels shorter than the header describes are refused before C sees them")
 pixels_shorter_than_the_header_are_refused()
-    var out: []u8 = [0; 38]
-    var eleven: []u8 = [0; 11]
+    val out: []u8 = [0; 38]
+    val eleven: []u8 = [0; 11]
 
     val needed: usize = encode(eleven, rgb_header(), out) match
         Err(Truncated(n)) -> n
@@ -228,7 +228,7 @@ pixels_shorter_than_the_header_are_refused()
 
     // One byte more and it is an image, which is what says the boundary is where it should be rather
     // than merely somewhere.
-    var twelve: []u8 = [0; 12]
+    val twelve: []u8 = [0; 12]
 
     assert(encode(twelve, rgb_header(), out).is_ok(), "twelve bytes is a 2x2 RGB image")
 end pixels_shorter_than_the_header_are_refused
@@ -238,8 +238,8 @@ end pixels_shorter_than_the_header_are_refused
 // them without distinguishing -- so `Invalid` is as much as this binding can honestly say.
 @test("a header describing no image is refused")
 a_header_describing_no_image_is_refused()
-    var out: []u8 = [0; 64]
-    var pixels: []u8 = [0; 64]
+    val out: []u8 = [0; 64]
+    val pixels: []u8 = [0; 64]
 
     val zero_width = encode(pixels, Header(0, 2, 3, Srgb), out) match
         Err(Invalid) -> true
@@ -264,10 +264,10 @@ end a_header_describing_no_image_is_refused
 // arithmetic.
 @test("bytes that are not a QOI image are refused by both ends")
 bytes_that_are_not_an_image_are_refused()
-    var back: []u8 = [0; 16]
+    val back: []u8 = [0; 16]
 
-    var short: []u8 = [113, 111, 105, 102]
-    var wrong: []u8 = [0; 32]
+    val short: []u8 = [113, 111, 105, 102]
+    val wrong: []u8 = [0; 32]
 
     assert(header(short).is_none(), "four bytes cannot hold a header")
     assert(header(wrong).is_none(), "and thirty-two zero bytes are not an image")
