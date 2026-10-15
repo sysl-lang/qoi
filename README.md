@@ -3,6 +3,8 @@
 Lossless image compression for [sysl](https://github.com/sysl-lang/sysl), bound to
 [QOI](https://qoiformat.org) — the Quite OK Image format.
 
+*An independent sysl package for QOI. It is not affiliated with or endorsed by QOI's authors or trademark holders.*
+
 QOI is PNG-comparable compression in six hundred lines of C: an order of magnitude faster to encode,
 several times faster to decode, and about as small. The whole format is four operations over a
 rolling sixty-four-entry colour index, which is why the reference implementation fits in one header
