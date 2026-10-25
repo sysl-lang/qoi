@@ -24,6 +24,7 @@
 package {
   name    = "qoi"
   version = "0.2.0"
+  sysl    = "0.6.0"
 }
 
 // **There is deliberately no `requires` block, and for this package that took work.**

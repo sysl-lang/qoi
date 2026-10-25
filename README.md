@@ -23,7 +23,7 @@ sh/sysl/qoi/
         shim.c          the arena, and the C that only C can reach
         shim.h          the three statuses the shim answers, so both languages can name them
         qoi.h           vendored QOI, unmodified — phoboslab/qoi, MIT
-package.hocon           who this package is, and what it needs of the machine
+sysl.hocon              who this package is, and what it needs of the machine
 ```
 
 The module is **`sh.sysl.qoi`**, and the directories are that name: a dotted module name mirrors its
@@ -44,7 +44,7 @@ talks to is `shim.c`'s. The rest of this file explains why.
 
 ## Using it
 
-Name it in your project's `package.hocon` and `sysl build` fetches it:
+Name it in your project's `sysl.hocon` and `sysl build` fetches it:
 
 ```hocon
 dependencies {
@@ -209,7 +209,7 @@ static void *sysl_qoi_alloc(size_t sz) {
 
 Ownership transfer becomes caller-supplies-the-buffer, which is the pattern the rest of these
 packages already use. There is no heap underneath this package at all — a stronger statement than
-`alloc = false` would have been, and the reason `package.hocon` has no `requires` block rather than
+`alloc = false` would have been, and the reason `sysl.hocon` has no `requires` block rather than
 an empty one.
 
 **`g_short` is what makes the refusals honest.** QOI answers a null pointer to a buffer that was too

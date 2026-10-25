@@ -12,7 +12,7 @@ import sysl.slices.{as_ptr, as_mut_ptr}
 //
 // ==This package asks for no capabilities, and that is the interesting part==
 //
-// `package.hocon` has no `requires` block. The binding needs no allocator, opens no file, and asks
+// `sysl.hocon` has no `requires` block. The binding needs no allocator, opens no file, and asks
 // the operating system for nothing -- which for a library whose entire C API hands back `malloc`'d
 // storage takes some explaining.
 //
